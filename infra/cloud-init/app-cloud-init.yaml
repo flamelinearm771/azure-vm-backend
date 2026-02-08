@@ -1,0 +1,102 @@
+#!/bin/bash
+#cloud-config
+
+# App Layer Cloud-Init Script for QuickClip VM Migration
+# This script provisions Node.js runtime and starts the application services
+
+packages:
+  - curl
+  - git
+  - nodejs
+  - npm
+
+runcmd:
+  # Update system
+  - apt-get update
+  - apt-get upgrade -y
+  
+  # Install Node.js 18
+  - curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+  - apt-get install -y nodejs
+  
+  # Clone application repository
+  - cd /opt
+  - git clone https://github.com/your-org/PH-EG-QuickClip.git quickclip-app
+  - cd /opt/quickclip-app
+  
+  # Install dependencies
+  - npm install
+  
+  # Create systemd service for application
+  - cat > /etc/systemd/system/quickclip-app.service << 'EOF'
+[Unit]
+Description=QuickClip Application Service
+After=network.target
+
+[Service]
+Type=simple
+User=nobody
+WorkingDirectory=/opt/quickclip-app
+ExecStart=/usr/bin/npm start
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  
+  # Enable and start service
+  - systemctl daemon-reload
+  - systemctl enable quickclip-app.service
+  - systemctl start quickclip-app.service
+  
+  # Create health check endpoint listener (simple)
+  - mkdir -p /opt/health-check
+  - cat > /opt/health-check/health.js << 'EOF'
+const http = require('http');
+const server = http.createServer((req, res) => {
+  if (req.url === '/health') {
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end('OK');
+  } else {
+    res.writeHead(404);
+    res.end();
+  }
+});
+server.listen(80, () => {
+  console.log('Health check listening on port 80');
+});
+EOF
+  
+  - cat > /etc/systemd/system/health-check.service << 'EOF'
+[Unit]
+Description=Health Check Endpoint
+After=network.target
+
+[Service]
+Type=simple
+User=nobody
+ExecStart=/usr/bin/node /opt/health-check/health.js
+Restart=always
+RestartSec=5
+StandardOutput=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  
+  - systemctl daemon-reload
+  - systemctl enable health-check.service
+  - systemctl start health-check.service
+
+# Write system information for debugging
+write_files:
+  - path: /var/log/quickclip-provision.log
+    content: |
+      Cloud-init provisioning completed for QuickClip App VM
+      Timestamp: $(date)
+      Hostname: $(hostname)
+      Node version: $(node --version)
+      Npm version: $(npm --version)

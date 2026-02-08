@@ -1,0 +1,131 @@
+#cloud-config
+## Cloud-init for Database VM (PostgreSQL)
+## Installs PostgreSQL, configures private-only access, creates databases and users
+
+package_update: true
+package_upgrade: true
+
+packages:
+  - postgresql
+  - postgresql-contrib
+  - curl
+  - wget
+  - net-tools
+  - nano
+  - htop
+
+# PostgreSQL configuration
+postgres:
+  databases:
+    - quickclip_db
+
+  users:
+    - name: postgres
+      password: ${db_password}
+    - name: quickclip_user
+      password: ${db_password}
+
+runcmd:
+  # Start PostgreSQL
+  - systemctl start postgresql
+  - systemctl enable postgresql
+  
+  # Wait for PostgreSQL to start
+  - sleep 5
+  
+  # Create database if not exists
+  - sudo -u postgres psql -c "CREATE DATABASE ${db_name} OWNER postgres;" 2>/dev/null || echo "Database already exists"
+  
+  # Create application user
+  - sudo -u postgres psql -c "CREATE USER quickclip_user WITH PASSWORD '${db_password}';" 2>/dev/null || echo "User already exists"
+  
+  # Grant privileges
+  - sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE ${db_name} TO quickclip_user;"
+  
+  # Configure PostgreSQL to listen only on private interface (127.0.0.1 and private subnet)
+  # This is the security requirement for Task 1 - database not publicly accessible
+  - |
+    cat >> /etc/postgresql/*/main/postgresql.conf << 'PGCONF'
+    # Listen only on all interfaces but restricted by NSG
+    listen_addresses = '*'
+    max_connections = 200
+    shared_buffers = 256MB
+    PGCONF
+  
+  # Configure pg_hba.conf to allow connections from app subnet only
+  - |
+    cat >> /etc/postgresql/*/main/pg_hba.conf << 'PGHBA'
+    # Allow connections from application subnet (10.0.1.0/24)
+    host    all             all             10.0.1.0/24             md5
+    PGHBA
+  
+  # Restart PostgreSQL with new configuration
+  - systemctl restart postgresql
+  
+  # Create basic schema for the app (optional - customize as needed)
+  - sudo -u postgres psql -d ${db_name} << 'SQL'
+CREATE TABLE IF NOT EXISTS jobs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  status VARCHAR(50) NOT NULL,
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW(),
+  result JSONB,
+  error TEXT
+);
+
+CREATE TABLE IF NOT EXISTS transcriptions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  job_id UUID NOT NULL REFERENCES jobs(id),
+  transcription TEXT,
+  summary TEXT,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX idx_jobs_status ON jobs(status);
+CREATE INDEX idx_jobs_created ON jobs(created_at);
+CREATE INDEX idx_transcriptions_job_id ON transcriptions(job_id);
+SQL
+  
+  # Set password for quickclip_user
+  - sudo -u postgres psql << 'SQL'
+ALTER USER quickclip_user WITH PASSWORD '${db_password}';
+SQL
+
+write_files:
+  - path: /root/db-setup.sql
+    owner: root:root
+    permissions: '0600'
+    content: |
+      -- QuickClip Database Setup Script
+      -- Run with: sudo -u postgres psql -f /root/db-setup.sql
+      
+      -- Create database if needed
+      -- CREATE DATABASE quickclip_db;
+      
+      -- Create user if needed
+      -- CREATE USER quickclip_user WITH PASSWORD 'your_password_here';
+      
+      -- Grant privileges
+      -- GRANT ALL PRIVILEGES ON DATABASE quickclip_db TO quickclip_user;
+      
+      -- Tables already created by cloud-init
+      \dt
+
+  - path: /root/check-db.sh
+    owner: root:root
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      echo "=== PostgreSQL Service Status ==="
+      systemctl status postgresql --no-pager
+      echo ""
+      echo "=== PostgreSQL Listening On ==="
+      netstat -tlnp | grep postgres || ss -tlnp | grep postgres
+      echo ""
+      echo "=== Databases ==="
+      sudo -u postgres psql -l
+      echo ""
+      echo "=== Tables in ${db_name} ==="
+      sudo -u postgres psql -d ${db_name} -c "\dt"
+
+final_message: "PostgreSQL installation and configuration complete. Check /var/log/cloud-init-output.log for details."

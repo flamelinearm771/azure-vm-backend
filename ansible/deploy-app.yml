@@ -1,0 +1,162 @@
+---
+# Ansible Playbook for QuickClip Application Redeployment
+# Deploy/update application code on VMs after initial provisioning
+#
+# Usage:
+#   ansible-playbook -i inventory.ini deploy-app.yml -u azureuser --private-key ~/.ssh/id_rsa
+#   or
+#   ansible-playbook -i inventory.ini deploy-app.yml -e "git_branch=develop"
+
+- name: Deploy QuickClip Application
+  hosts: app_vms
+  become: yes
+  become_user: myapp
+  vars:
+    app_repo: "{{ git_repo_url | default('https://github.com/your-org/PH-EG-QuickClip.git') }}"
+    app_branch: "{{ git_branch | default('main') }}"
+    app_home: /opt/quickclip
+    app_user: myapp
+  
+  tasks:
+    # Update system packages
+    - name: Update apt cache
+      become: yes
+      become_user: root
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    # Pull latest code
+    - name: Check if repo exists
+      stat:
+        path: "{{ app_home }}/.git"
+      register: git_exists
+
+    - name: Clone repository
+      git:
+        repo: "{{ app_repo }}"
+        dest: "{{ app_home }}"
+        version: "{{ app_branch }}"
+        update: yes
+      become: yes
+      become_user: root
+      when: not git_exists.stat.exists
+
+    - name: Update repository
+      shell: |
+        cd {{ app_home }}
+        git fetch origin
+        git checkout {{ app_branch }}
+        git pull origin {{ app_branch }}
+      become: yes
+      become_user: root
+      register: git_update
+      changed_when: "git_update.rc == 0"
+
+    # Install dependencies
+    - name: Install upload-api dependencies
+      shell: |
+        cd {{ app_home }}/upload-api
+        npm install
+      become: yes
+      become_user: root
+      register: npm_install_api
+      changed_when: "'added' in npm_install_api.stdout or 'up to date' in npm_install_api.stdout"
+
+    - name: Install worker dependencies
+      shell: |
+        cd {{ app_home }}/worker
+        npm install
+      become: yes
+      become_user: root
+      register: npm_install_worker
+      changed_when: "'added' in npm_install_worker.stdout or 'up to date' in npm_install_worker.stdout"
+
+    # Set permissions
+    - name: Fix directory permissions
+      file:
+        path: "{{ app_home }}"
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        mode: '0755'
+        recurse: yes
+      become: yes
+      become_user: root
+
+    # Restart services
+    - name: Restart upload-api service
+      systemd:
+        name: upload-api
+        daemon_reload: yes
+        state: restarted
+      become: yes
+      become_user: root
+      register: restart_api
+
+    - name: Restart worker service
+      systemd:
+        name: worker
+        daemon_reload: yes
+        state: restarted
+      become: yes
+      become_user: root
+      register: restart_worker
+
+    # Verify services are running
+    - name: Check upload-api status
+      systemd:
+        name: upload-api
+      register: api_status
+      become: yes
+      become_user: root
+
+    - name: Check worker status
+      systemd:
+        name: worker
+      register: worker_status
+      become: yes
+      become_user: root
+
+    # Display summary
+    - name: Display deployment summary
+      debug:
+        msg: |
+          ======== DEPLOYMENT SUMMARY ========
+          Repository: {{ app_repo }}
+          Branch: {{ app_branch }}
+          App Home: {{ app_home }}
+          
+          Git Update: {{ git_update.stdout | default('No changes') }}
+          
+          Upload-API Status: {{ api_status.status.ActiveState }}
+          Worker Status: {{ worker_status.status.ActiveState }}
+          
+          Recent Logs (Upload-API):
+          {{ lookup('pipe', 'journalctl -u upload-api -n 5 --no-pager') | default('No logs') }}
+          
+          Recent Logs (Worker):
+          {{ lookup('pipe', 'journalctl -u worker -n 5 --no-pager') | default('No logs') }}
+          =====================================
+      become: yes
+      become_user: root
+
+- name: Verify Application
+  hosts: localhost
+  gather_facts: no
+  vars:
+    lb_public_ip: "{{ hostvars['localhost']['lb_ip'] | default('unknown') }}"
+  
+  tasks:
+    - name: Test health endpoint
+      uri:
+        url: "http://{{ lb_public_ip }}/health"
+        method: GET
+        status_code: 200
+      ignore_errors: yes
+      register: health_check
+      when: lb_public_ip != 'unknown'
+
+    - name: Display health check result
+      debug:
+        msg: "Health check: {{ 'PASSED' if health_check.status == 200 else 'FAILED' }}"
+      when: lb_public_ip != 'unknown'

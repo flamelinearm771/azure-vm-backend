@@ -1,0 +1,161 @@
+#cloud-config
+## Cloud-init for Application VMs (upload-api and worker)
+## Installs Node.js, git, pm2, pulls repository, configures environment
+
+package_update: true
+package_upgrade: true
+
+packages:
+  - curl
+  - wget
+  - git
+  - build-essential
+  - python3
+  - python3-pip
+  - jq
+  - netcat-openbsd
+  - nano
+  - htop
+
+runcmd:
+  # Install Node.js 18 LTS
+  - curl -sL https://deb.nodesource.com/setup_18.x | bash -
+  - apt-get install -y nodejs
+  
+  # Install pm2 globally (process manager)
+  - npm install -g pm2
+  - npm install -g pm2-logrotate
+  
+  # Create app user and directories
+  - useradd -m -s /bin/bash myapp || true
+  - mkdir -p /opt/quickclip /etc/myapp /var/log/myapp
+  - chown -R myapp:myapp /opt/quickclip /var/log/myapp
+  
+  # Clone repository (adjust URL in terraform variables)
+  - cd /opt/quickclip
+  - sudo -u myapp git clone https://github.com/your-org/PH-EG-QuickClip.git . || echo "Git clone failed - use deploy.sh to sync"
+  
+  # Install Node.js dependencies for upload-api
+  - cd /opt/quickclip/upload-api
+  - npm install
+  
+  # Install Node.js dependencies for worker
+  - cd /opt/quickclip/worker
+  - npm install
+  
+  # Create systemd service for upload-api
+  - cat > /etc/systemd/system/upload-api.service << 'EOF'
+[Unit]
+Description=QuickClip Upload API Service
+After=network.target
+
+[Service]
+Type=simple
+User=myapp
+WorkingDirectory=/opt/quickclip/upload-api
+EnvironmentFile=/etc/myapp/.env
+ExecStart=/usr/bin/node server.js
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=upload-api
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  
+  # Create systemd service for worker
+  - cat > /etc/systemd/system/worker.service << 'EOF'
+[Unit]
+Description=QuickClip Worker Service
+After=network.target
+
+[Service]
+Type=simple
+User=myapp
+WorkingDirectory=/opt/quickclip/worker
+EnvironmentFile=/etc/myapp/.env
+ExecStart=/usr/bin/node worker.js
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=worker
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  
+  # Reload systemd
+  - systemctl daemon-reload
+  
+  # Create placeholder for environment file (will be populated by deploy.sh)
+  - cat > /etc/myapp/.env.template << 'EOF'
+# Populated by deploy.sh
+NODE_ENV=production
+PORT=3000
+AZURE_STORAGE_CONNECTION_STRING=
+SERVICE_BUS_CONNECTION_STRING=
+DB_HOST=
+DB_PORT=5432
+DB_NAME=quickclip_db
+DB_USER=postgres
+DB_PASSWORD=
+LOG_LEVEL=info
+EOF
+  - cp /etc/myapp/.env.template /etc/myapp/.env
+  - chmod 600 /etc/myapp/.env
+  - chown myapp:myapp /etc/myapp/.env
+
+  # Create a simple health check endpoint handler (optional, for Load Balancer probe)
+  # This will be handled by the Node.js app, but we can add a basic one
+  - cat > /opt/quickclip/health-check.js << 'EOF'
+const http = require('http');
+const server = http.createServer((req, res) => {
+  if (req.url === '/health') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ status: 'ok' }));
+  } else {
+    res.writeHead(404);
+    res.end();
+  }
+});
+server.listen(3000, () => console.log('Health check on 3000'));
+EOF
+
+write_files:
+  - path: /opt/quickclip/start-services.sh
+    owner: myapp:myapp
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      echo "Starting QuickClip services..."
+      
+      # Wait for database to be ready (if needed)
+      sleep 5
+      
+      # Start upload-api
+      systemctl start upload-api
+      systemctl enable upload-api
+      
+      # Start worker
+      systemctl start worker
+      systemctl enable worker
+      
+      echo "Services started. Check status with: systemctl status upload-api worker"
+
+  - path: /opt/quickclip/check-services.sh
+    owner: myapp:myapp
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      echo "=== QuickClip Services Status ==="
+      systemctl status upload-api --no-pager
+      echo ""
+      systemctl status worker --no-pager
+      echo ""
+      echo "=== Recent Logs ==="
+      journalctl -n 20 -u upload-api --no-pager
+      echo ""
+      journalctl -n 20 -u worker --no-pager

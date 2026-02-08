@@ -1,0 +1,365 @@
+***The Frontend for this project looks like this***
+
+// src/app/page.jsx
+
+"use client";
+
+import { useState, useEffect, useRef } from "react";
+
+/*
+  Page: VideoProcessor
+  - Uploads file to BACKEND_URL + /upload
+  - Receives { jobId, status }
+  - Polls BACKEND_URL + /jobs/:jobId until completed/failed
+  - Shows "stage" tracker: Uploaded -> Queued -> Processing -> Completed/Failed
+  - Config: set NEXT_PUBLIC_BACKEND_URL in your frontend env (Vercel or .env.local)
+*/
+
+const DEFAULT_BACKEND =
+  typeof window !== "undefined" && window.location.hostname === "localhost"
+    ? "http://localhost:3000" // dev backend default (adjust if your local upload-api uses a different port)
+    : "https://upload-api.orangecliff-5027c880.centralindia.azurecontainerapps.io";
+
+const BACKEND_URL =
+  process.env.NEXT_PUBLIC_BACKEND_URL || DEFAULT_BACKEND;
+
+export default function VideoProcessor() {
+  const [file, setFile] = useState(null);
+  const [uploading, setUploading] = useState(false);
+  const [jobId, setJobId] = useState(null);
+  const [stage, setStage] = useState("idle"); // idle, preparing, uploaded, queued, processing, completed, failed
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState(null);
+  const [polling, setPolling] = useState(false);
+  const intervalRef = useRef(null);
+  const [progressText, setProgressText] = useState("");
+
+  // choose polling interval (ms)
+  const POLL_INTERVAL = 2000;
+
+  const reset = () => {
+    setFile(null);
+    setUploading(false);
+    setJobId(null);
+    setStage("idle");
+    setResult(null);
+    setError(null);
+    setProgressText("");
+    stopPolling();
+  };
+
+  const stopPolling = () => {
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+    setPolling(false);
+  };
+
+  const handleFileChange = (e) => {
+    const f = e.target.files?.[0] ?? null;
+    setFile(f);
+    setError(null);
+    setResult(null);
+    setStage("idle");
+    setProgressText("");
+  };
+
+  const startPolling = (job) => {
+    setPolling(true);
+    intervalRef.current = setInterval(async () => {
+      try {
+        const res = await fetch(`${BACKEND_URL}/jobs/${job}`);
+        if (!res.ok) {
+          // sometimes GET /jobs returns 404 while queued => treat as still queued
+          // if 404 persists, show an error after some retries (not implemented here)
+          console.warn("job status fetch not ok", res.status);
+          return;
+        }
+        const j = await res.json();
+        // j expected shape: { status: "queued|processing|completed|failed", result: {...} }
+        // adjust stages depending on response
+        if (j.status === "queued") {
+          setStage("queued");
+          setProgressText("Job is queued.");
+        } else if (j.status === "processing") {
+          setStage("processing");
+          setProgressText("Worker is processing the video...");
+        } else if (j.status === "completed") {
+          setStage("completed");
+          setProgressText("Processing completed");
+          setResult(j.result ?? null);
+          stopPolling();
+        } else if (j.status === "failed") {
+          setStage("failed");
+          setProgressText("Job failed");
+          setError(j.error || "Job processing failed");
+          stopPolling();
+        } else {
+          // unknown status - set as queued
+          setStage(j.status || "queued");
+        }
+      } catch (err) {
+        console.error("poll error", err);
+        setProgressText("Error polling job status (see console).");
+        // keep polling — network hiccups happen
+      }
+    }, POLL_INTERVAL);
+  };
+
+  const handleSubmit = async () => {
+    setError(null);
+    setResult(null);
+
+    if (!file) {
+      setError("Please select a video file first.");
+      return;
+    }
+
+    setUploading(true);
+    setStage("preparing");
+    setProgressText("Preparing upload...");
+
+    try {
+      const fd = new FormData();
+      fd.append("video", file);
+
+      setProgressText("Uploading to backend...");
+      const res = await fetch(`${BACKEND_URL}/upload`, {
+        method: "POST",
+        body: fd,
+      });
+
+      const bodyText = await res.text();
+      // backend returns JSON; be resilient
+      let body;
+      try {
+        body = JSON.parse(bodyText);
+      } catch {
+        throw new Error("Invalid JSON from server: " + bodyText);
+      }
+
+      if (!res.ok) {
+        throw new Error(body.error || `Upload failed: ${res.status}`);
+      }
+
+      // Expect { jobId, status }
+      const id = body.jobId;
+      if (!id) throw new Error("No jobId returned from upload API");
+
+      setJobId(id);
+      setStage(body.status || "queued");
+      setProgressText("File uploaded — job queued.");
+
+      // start polling
+      startPolling(id);
+    } catch (err) {
+      console.error("Upload / submit error:", err);
+      setError(err.message || String(err));
+      setStage("failed");
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  // cleanup polling when leaving
+  useEffect(() => {
+    return () => stopPolling();
+  }, []);
+
+  // Small helper UI: stage check
+  const StageRow = ({ name, idFor }) => {
+    const active = (() => {
+      if (stage === "idle") return false;
+      if (stage === "preparing" && idFor === "preparing") return true;
+      if (stage === "uploaded" && idFor === "uploaded") return true;
+      if (stage === "queued" && (idFor === "queued" || idFor === "uploaded")) return true;
+      if (stage === "processing" && (idFor === "processing" || idFor === "queued" || idFor === "uploaded")) return true;
+      if (stage === "completed" && idFor !== "failed") return true;
+      if (stage === "failed" && idFor === "failed") return true;
+      return false;
+    })();
+
+    return (
+      <div className="flex items-center gap-3">
+        <span
+          style={{
+            width: 12,
+            height: 12,
+            borderRadius: 6,
+            display: "inline-block",
+            background: active ? "#22c55e" : "#374151",
+            boxShadow: active ? "0 0 8px rgba(34,197,94,0.4)" : "none",
+          }}
+        />
+        <span className="text-sm text-zinc-300">{name}</span>
+      </div>
+    );
+  };
+
+  return (
+    <div className="min-h-screen bg-gradient-to-b from-purple-900 via-indigo-900 to-black text-white p-8">
+      <div className="max-w-3xl mx-auto bg-black/40 p-8 rounded-2xl border border-white/5 shadow-xl">
+        <h1 className="text-3xl font-bold mb-6 text-center">Video → Transcription</h1>
+
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm mb-2">Choose video</label>
+            <input
+              type="file"
+              accept="video/*"
+              onChange={handleFileChange}
+              disabled={uploading}
+              className="block w-full py-2 px-3 rounded bg-white/5 border border-white/10"
+            />
+            {file && (
+              <p className="text-xs mt-2 text-zinc-300">
+                Selected: {file.name} ({(file.size / 1024 / 1024).toFixed(2)} MB)
+              </p>
+            )}
+          </div>
+
+          <div className="flex gap-3">
+            <button
+              onClick={handleSubmit}
+              disabled={uploading || !file}
+              className="px-6 py-3 bg-purple-600 hover:bg-purple-500 rounded disabled:opacity-60"
+            >
+              {uploading ? "Uploading..." : "Upload & Start"}
+            </button>
+            <button
+              onClick={reset}
+              className="px-6 py-3 bg-gray-700 hover:bg-gray-600 rounded"
+            >
+              Reset
+            </button>
+          </div>
+
+          <div className="mt-4 p-4 bg-white/5 rounded">
+            <div className="grid grid-cols-2 gap-2">
+              <StageRow name="1. File uploaded to API" idFor="uploaded" />
+              <StageRow name="2. Job queued (Service Bus)" idFor="queued" />
+              <StageRow name="3. Worker processing" idFor="processing" />
+              <StageRow name="4. Completed / Result ready" idFor="completed" />
+              <StageRow name="❌ Failed" idFor="failed" />
+            </div>
+
+            <p className="text-sm mt-3 text-zinc-300">{progressText}</p>
+            {jobId && <p className="text-xs mt-1 text-zinc-400">Job: {jobId}</p>}
+          </div>
+
+          {error && (
+            <div className="mt-4 p-3 bg-red-700/40 rounded">
+              <strong className="block">Error:</strong>
+              <div className="text-sm mt-1">{error}</div>
+            </div>
+          )}
+
+          {result && (
+            <div className="mt-4 space-y-4">
+              <div className="p-4 bg-white/6 rounded">
+                <h2 className="font-semibold mb-2">Transcription</h2>
+                <pre className="whitespace-pre-wrap text-sm text-zinc-100">{result.transcription}</pre>
+              </div>
+
+              {result.summary && (
+                <div className="p-4 bg-white/6 rounded">
+                  <h2 className="font-semibold mb-2">Summary</h2>
+                  <p className="text-sm text-zinc-100">{result.summary}</p>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        <p className="text-xs text-zinc-400 mt-6">
+          Backend: {BACKEND_URL} — POST /upload → returns jobId; GET /jobs/:id polls status.
+        </p>
+        <p className="text-xs text-zinc-500 mt-1">Open browser console for logs.</p>
+      </div>
+    </div>
+  );
+}
+
+
+
+
+// src/app/page.js
+import Image from "next/image";
+import Link from "next/link";
+
+export default function Home() {
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-zinc-900 text-white">
+      <main className="w-full max-w-3xl p-12">
+        <div className="text-center">
+          <Image src="/next.svg" alt="Next" width={120} height={28} />
+          <h1 className="text-3xl mt-6 font-bold">Video Transcription App</h1>
+          <p className="mt-3 text-zinc-300">Upload a video and get a transcript (asynchronous).</p>
+
+          <div className="mt-6">
+            <Link href="/"><a className="px-6 py-3 bg-purple-600 rounded">Open Processor</a></Link>
+          </div>
+        </div>
+      </main>
+    </div>
+  );
+}
+
+
+
+// src/app/layout.js
+import { Geist, Geist_Mono } from "next/font/google";
+import "./globals.css";
+
+const geistSans = Geist({
+  variable: "--font-geist-sans",
+  subsets: ["latin"],
+});
+
+const geistMono = Geist_Mono({
+  variable: "--font-geist-mono",
+  subsets: ["latin"],
+});
+
+export const metadata = {
+  title: "Video Transcription",
+  description: "Upload videos and get transcripts",
+};
+
+export default function RootLayout({ children }) {
+  return (
+    <html lang="en">
+      <body
+        className={`${geistSans.variable} ${geistMono.variable} antialiased bg-black`}
+      >
+        {children}
+      </body>
+    </html>
+  );
+}
+
+
+
+{
+  "name": "video-processor-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint"
+  },
+  "dependencies": {
+    "next": "16.1.3",
+    "react": "19.2.3",
+    "react-dom": "19.2.3"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "eslint": "^9",
+    "eslint-config-next": "16.1.3",
+    "tailwindcss": "^4"
+  }
+}

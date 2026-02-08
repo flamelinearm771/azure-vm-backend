@@ -1,0 +1,17 @@
+[Unit]
+Description=QuickClip Worker Service
+After=network.target
+
+[Service]
+Type=simple
+User=quickclip
+WorkingDirectory=/opt/quickclip/worker
+EnvironmentFile=/etc/quickclip/env
+ExecStart=/usr/bin/node worker-vm.js
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

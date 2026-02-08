@@ -1,0 +1,46 @@
+node_modules/
+uploads/
+.env
+*.log
+.DS_Store
+build_and_deploy.sh
+
+# Terraform & IaC
+*.tfvars
+!terraform.tfvars.example
+.terraform/
+.terraform.lock.hcl
+tfplan
+terraform.tfstate*
+crash.log
+
+# Deployment secrets - NEVER commit these
+credential.md
+/infra/scripts/*.env
+/infra/scripts/.env.local
+
+# SSH Keys
+!*.pub
+*.pem
+*.key
+id_rsa
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Azure CLI
+.azure/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Temporary files
+*.tmp
+*.temp
+
+
+credentials.txt
