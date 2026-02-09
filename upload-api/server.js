@@ -17,7 +17,13 @@ const app = express();
 
 // CORS
 const allowed = (process.env.ALLOWED_ORIGINS || "").split(",").map(s => s.trim()).filter(Boolean);
-app.use(cors({ origin: allowed.length ? allowed : true, credentials: true }));
+// app.use(cors({ origin: allowed.length ? allowed : true, credentials: true }));
+app.use(cors({
+  origin: "*",
+  methods: ["GET", "POST"],
+  allowedHeaders: ["Content-Type"],
+}));
+
 
 const upload = multer({ dest: "uploads/" });
 

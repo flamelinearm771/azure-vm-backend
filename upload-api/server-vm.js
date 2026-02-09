@@ -15,7 +15,13 @@ const app = express();
 
 // CORS configuration
 const allowed = (process.env.ALLOWED_ORIGINS || "*").split(",").map(s => s.trim()).filter(Boolean);
-app.use(cors({ origin: allowed, credentials: true }));
+// app.use(cors({ origin: allowed, credentials: true }));
+app.use(cors({
+  origin: "*",
+  methods: ["GET", "POST"],
+  allowedHeaders: ["Content-Type"],
+}));
+
 
 // JSON body parser
 app.use(express.json({ limit: '50mb' }));
