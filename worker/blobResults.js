@@ -1,5 +1,11 @@
 // upload-api/blobResults.js
 import { BlobServiceClient } from "@azure/storage-blob";
+import crypto from "crypto";
+
+// Ensure crypto is available globally for Azure SDK
+if (!globalThis.crypto) {
+  globalThis.crypto = crypto.webcrypto || crypto;
+}
 
 const connectionString = process.env.STORAGE_CONNECTION_STRING;
 if (!connectionString) throw new Error("STORAGE_CONNECTION_STRING not set");

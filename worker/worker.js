@@ -1,12 +1,23 @@
-import dotenv from "dotenv";
-dotenv.config();
+// Setup crypto immediately for Azure SDK compatibility
+import crypto from "crypto";
+if (!globalThis.crypto) {
+  globalThis.crypto = crypto.webcrypto || crypto;
+}
 
-import { startWorker } from "./serviceBusReceiver.js";
-import { downloadVideo } from "./blobDownload.js";
-import { processVideoFile } from "./lib/processVideo.js";
-import { uploadResult } from "./blobResults.js";
-import fs from "fs/promises";
+import dotenv from "dotenv";
 import path from "path";
+import { fileURLToPath } from "url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const envPath = path.join(__dirname, ".env");
+dotenv.config({ path: envPath });
+
+// Now use dynamic imports for modules that depend on env variables
+import fs from "fs/promises";
+const { startWorker } = await import("./serviceBusReceiver.js");
+const { downloadVideo } = await import("./blobDownload.js");
+const { processVideoFile } = await import("./lib/processVideo.js");
+const { uploadResult } = await import("./blobResults.js");
 
 async function handleJob(job) {
   const { jobId, videoBlob } = job;

@@ -4,8 +4,16 @@ import path from "path";
 import util from "util";
 import { exec as execCb } from "child_process";
 import ffmpegStatic from "ffmpeg-static";
+
+// Load env from parent directory
+import dotenv from "dotenv";
+import { fileURLToPath } from "url";
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const envPath = path.join(path.dirname(__dirname), ".env");
+dotenv.config({ path: envPath });
+
+// Now import Deepgram after env is loaded
 import { createClient } from "@deepgram/sdk";
-import { InferenceClient } from "@huggingface/inference";
 
 const exec = util.promisify(execCb);
 
@@ -15,14 +23,9 @@ if (!process.env.DEEPGRAM_API_KEY) {
   throw new Error("DEEPGRAM_API_KEY not set");
 }
 
-if (!process.env.HF_TOKEN) {
-  throw new Error("HF_TOKEN not set");
-}
-
 /* ---------------------- CLIENT INITIALIZATION ------------------- */
 
 const deepgram = createClient(process.env.DEEPGRAM_API_KEY);
-const hf = new InferenceClient(process.env.HF_TOKEN);
 
 /* ------------------------- MAIN FUNCTION ------------------------ */
 
@@ -31,7 +34,6 @@ export async function processVideoFile(videoPath) {
   const audioPath = path.join(tmpDir, `audio_${Date.now()}.wav`);
 
   let transcription = "";
-  let summary = "";
 
   /* ---------------------- FFMPEG SETUP ---------------------- */
 
@@ -84,39 +86,6 @@ export async function processVideoFile(videoPath) {
     throw new Error("ASR failed: " + err.message);
   }
 
-  /* -------------------- HF SUMMARIZATION -------------------- */
-
-  try {
-    if (transcription.trim().length === 0) {
-      summary = "No transcription available to summarize.";
-    } else {
-      const prompt = `
-Summarize the transcript below into a concise technical summary.
-Focus on key points and omit filler.
-
-Transcript:
-${transcription}
-`;
-
-      const response = await hf.chatCompletion({
-        model: "NousResearch/Hermes-3-Llama-3.1-8B",
-        messages: [
-          {
-            role: "user",
-            content: prompt,
-          },
-        ],
-        max_tokens: 300,
-        temperature: 0.4,
-      });
-
-      summary = response?.choices?.[0]?.message?.content ?? "";
-    }
-  } catch (err) {
-    console.error("HuggingFace error:", err);
-    summary = `Summary generation failed: ${err.message}`;
-  }
-
   /* ---------------------- CLEANUP ---------------------- */
 
   await fs.promises.unlink(audioPath).catch(() => {});
@@ -125,6 +94,5 @@ ${transcription}
 
   return {
     transcription,
-    summary,
   };
 }
