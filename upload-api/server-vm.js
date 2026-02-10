@@ -10,6 +10,7 @@ import cors from "cors";
 import { uploadVideoToBlob } from "./blobStorage.js"; 
 import { sendJobMessage } from "./serviceBus.js";
 import { getResultIfExists } from "./blobResults.js";
+import { getTranscription } from "./db-vm.js";
 
 const app = express();
 
@@ -75,14 +76,21 @@ app.get("/jobs/:jobId", async (req, res) => {
   if (!jobId) return res.status(400).json({ error: "jobId required" });
 
   try {
-    const result = await getResultIfExists(jobId);
+    // 1) check DB first (fast path)
+    const transcription = await getTranscription(jobId);
+    if (transcription) {
+      return res.json({
+        status: "completed",
+        result: { transcription },
+      });
+    }
 
+    // 2) fallback to existing blob results (unchanged)
+    const result = await getResultIfExists(jobId);
     if (!result) {
-      // Job still processing
       return res.json({ status: "processing" });
     }
 
-    // Return completed result
     return res.json({
       status: "completed",
       result,
