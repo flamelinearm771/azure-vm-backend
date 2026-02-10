@@ -19,6 +19,12 @@ export async function getTranscription(jobId) {
   return r.rows[0]?.transcription ?? null;
 }
 
+export async function getAllTranscriptions() {
+  const q = "SELECT job_id, transcription FROM transcriptions ORDER BY job_id DESC";
+  const r = await pool.query(q);
+  return r.rows;
+}
+
 export async function closePool() {
   await pool.end();
 }

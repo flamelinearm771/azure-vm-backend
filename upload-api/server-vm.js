@@ -10,7 +10,7 @@ import cors from "cors";
 import { uploadVideoToBlob } from "./blobStorage.js"; 
 import { sendJobMessage } from "./serviceBus.js";
 import { getResultIfExists } from "./blobResults.js";
-import { getTranscription } from "./db-vm.js";
+import { getTranscription, getAllTranscriptions } from "./db-vm.js";
 
 const app = express();
 
@@ -97,6 +97,17 @@ app.get("/jobs/:jobId", async (req, res) => {
     });
   } catch (err) {
     console.error("error fetching job result", err);
+    return res.status(500).json({ error: String(err) });
+  }
+});
+
+// GET all transcriptions (read-only, for frontend)
+app.get("/transcriptions", async (req, res) => {
+  try {
+    const rows = await getAllTranscriptions();
+    return res.json(rows);
+  } catch (err) {
+    console.error("error fetching transcriptions", err);
     return res.status(500).json({ error: String(err) });
   }
 });
