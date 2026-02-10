@@ -1,0 +1,176 @@
+## Full navigation flow (from local machine → vm's postgres database table)
+
+##the table and database was created like this:
+CREATE DATABASE transcription_db;
+CREATE USER appuser WITH PASSWORD 'strongpassword';
+GRANT ALL PRIVILEGES ON DATABASE transcription_db TO appuser;
+\q
+postgres=# \c transcription_db
+You are now connected to database "transcription_db" as user "postgres".
+transcription_db=# \dt
+Did not find any relations.
+transcription_db=# CREATE TABLE transcriptions (
+  job_id UUID PRIMARY KEY,
+  transcription TEXT
+);
+CREATE TABLE
+transcription_db=# \dt
+             List of relations
+ Schema |      Name      | Type  |  Owner   
+--------+----------------+-------+----------
+ public | transcriptions | table | postgres
+(1 row)
+
+transcription_db=#
+
+
+## the database of vm-db can be accessed from vm-app like this:
+vm-app@vm-migartion-virtual-machine-for-app-1:~$ psql \
+  -h 10.0.1.4 \
+  -U appuser \
+  -d transcription_db
+Password for user appuser: 
+psql (16.11 (Ubuntu 16.11-0ubuntu0.24.04.1))
+SSL connection (protocol: TLSv1.3, cipher: TLS_AES_256_GCM_SHA384, compression: off)
+Type "help" for help.
+
+transcription_db=> INSERT INTO transcriptions (job_id, transcription)
+VALUES (
+  gen_random_uuid(),
+  'hello from vm-app'
+);
+INSERT 0 1
+transcription_db=> SELECT * FROM transcriptions;
+                job_id                |   transcription   
+--------------------------------------+-------------------
+ e788d5c2-264d-4dfe-86bb-9bd41ec71f56 | hello from vm-app
+(1 row)
+
+transcription_db=> 
+
+
+
+
+
+
+
+### 1️⃣ SSH into the VM of database (vm-db)
+
+From **local machine**:
+
+```bash
+ssh vm-db@20.198.8.81
+```
+
+---
+
+### 2️⃣ Switch to the postgres system user
+
+Inside the VM:
+
+```bash
+sudo -i -u postgres
+```
+
+---
+
+### 3️⃣ Open PostgreSQL shell
+
+```bash
+psql
+```
+
+You should see:
+
+```text
+postgres=#
+```
+
+---
+
+### 4️⃣ Connect to the database
+
+```sql
+\c transcription_db
+```
+
+Prompt becomes:
+
+```text
+transcription_db=#
+```
+
+---
+
+### 5️⃣ List all tables in the database
+
+```sql
+\dt
+```
+
+Expected:
+
+```text
+ public | transcriptions | table | postgres
+```
+
+---
+
+### 6️⃣ Inspect the table structure
+
+```sql
+\d transcriptions
+```
+
+---
+
+### 7️⃣ Read all rows from the table
+
+```sql
+SELECT * FROM transcriptions;
+```
+
+---
+
+### 8️⃣ Insert a row (example)
+
+```sql
+INSERT INTO transcriptions (job_id, transcription)
+VALUES (
+  gen_random_uuid(),
+  'example transcription text'
+);
+```
+
+---
+
+### 9️⃣ Query by job_id (example)
+
+```sql
+SELECT transcription
+FROM transcriptions
+WHERE job_id = 'PUT-UUID-HERE';
+```
+
+---
+
+### 🔚 Exit cleanly
+
+Exit psql:
+
+```sql
+\q
+```
+
+Exit postgres user:
+
+```bash
+exit
+```
+
+Exit SSH:
+
+```bash
+exit
+```
+

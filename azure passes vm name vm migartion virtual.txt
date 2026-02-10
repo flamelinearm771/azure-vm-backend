@@ -1,0 +1,8 @@
+vm name: vm-migartion-virtual-machine-for-app-1
+username: vm-app
+password: Virtual-Machine-App-1
+
+
+vm name: vm-migartion-virtual-machine-for-db
+username: vm-db
+password: Virtual-Machine-Db-1
