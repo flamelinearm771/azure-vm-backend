@@ -1,3 +1,10 @@
+import crypto from "crypto";
+
+if (!globalThis.crypto) {
+  globalThis.crypto = crypto.webcrypto || crypto;
+}
+
+
 import dotenv from "dotenv";
 dotenv.config();
 
